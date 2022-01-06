@@ -88,7 +88,15 @@ checkName <- function(cardName){
 
 
 
-parseDecklist <- function( filepath ){
+parseDecklist <- function( filepath = NULL, deck_id = NULL ){
+  
+  if( !is.null(deck_id) ){
+    filepath <- paste0("https://www.mtggoldfish.com/deck/download/", deck_id )
+  }
+  
+  if( is.null(filepath)){
+    stop("No Deck Specified")
+  }
   
   lines <- readLines(filepath)
   break_pt <- which( lines == "")
