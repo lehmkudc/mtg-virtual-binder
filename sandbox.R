@@ -154,3 +154,20 @@ con <- dbConnect(
   dbname = "marina_inventory"
 )
 
+
+dbGetQuery(
+  con,
+  "
+  "
+)
+
+
+
+
+con <- dbConnect(
+  drv = MariaDB(),
+  host = "localhost",
+  port = 3306,
+  username = "root",
+  password = "c6H12-o6"
+)

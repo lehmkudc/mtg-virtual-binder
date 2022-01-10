@@ -101,6 +101,11 @@ parseDecklist <- function( filepath = NULL, deck_id = NULL ){
   lines <- readLines(filepath)
   break_pt <- which( lines == "")
   
+  if( length(break_pt) == 0 ){
+    print( lines )
+    return( data.frame() )
+  }
+  
   reg <- "^(\\w+)\\s?(.*)$"
   main <- data.frame(raw = lines[1:(break_pt-1)]) %>%
     mutate(

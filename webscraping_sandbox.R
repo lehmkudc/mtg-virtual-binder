@@ -1,129 +1,178 @@
-
+source('scraping_functions.R')
+source('inventory_functions.R')
 
 suppressPackageStartupMessages({
-  library(tidyverse)
-  library(rvest)
-  library(glue)
-  library(lubridate)
-  library(curl)
-  library(httr)
-  library(jsonlite)
+  library(plotly)
+  library(umap)
 })
 
+tourney_ids <- getTourneyIDs(format = "Pauper", months_prior =6)
+place <- 16
 
-getTourneyIDs <- function( 
-  format = "Modern", months_prior = 3
-){
-  # TODO: allow for different formats
-  # TODO: allow for different tournament types
-  # TODO: fix situation with too many decklists creating pagination
-  # TODO: add better date range inputs
-  # TODO: add verbose mode for tournament metadata
+total_decklists <- map(tourney_ids, function(tourney_id){
+  #Sys.sleep(place/60)
+  getDeckIDs(tourney_id, place=place, verbose = TRUE)
+}) %>% bind_rows() %>% as.data.table()
+
+
+vector_mapped_lists <- pmap( total_decklists, function(Place, Deck, Pilot, deck_id){
+
+  Sys.sleep(1)
+  print( c(Deck, deck_id))
   
-  end_date <- Sys.Date()
-  start_date <- Sys.Date() - months( months_prior )
+  tryCatch(expr = {
+    decklist <- parseDecklist( deck_id = deck_id ) %>%
+      filter( board == "main")
+  }, error = function(e){
+    decklist <- data.table()
+  })
+  if (is.null(decklist)){
+    return( data.table() )
+  }
   
+  if( nrow(decklist) == 0 ){
+    return( data.table() )
+  }
   
-  search_url <- paste0(
-    "https://www.mtggoldfish.com/tournament_searches/create?utf8=%E2%9C%93",
-    "&tournament_search[name]=", "Modern+Challenge",
-    "&tournament_search[format]=", "modern",
-    "&tournament_search[date_range]=",
-    start_date %>% format("%m/%d/%Y"), "+-+",
-    end_date %>% format("%m/%d/%Y"),
-    "&commit=Search"
+  vectored_list <- decklist %>%
+    #mutate( column_name = paste0(cardname, "_", board)) %>%
+    column_to_rownames( "cardname") %>%
+    select( qty ) %>%
+    t() %>%
+    as.data.table()
+  
+  preview_text <- paste0(
+    Deck, ":\n",
+    decklist %>%
+      filter( board == 'main' ) %>%
+      mutate(line = paste( qty, cardname) ) %>%
+      arrange( desc( qty) ) %>%
+      pull( line ) %>%
+      head( 10 ) %>%
+      paste( ., collapse = "\n "),
+    "\n..."
   )
   
-  search_page_raw <- read_html(search_url)
+  vectored_list <- vectored_list %>%
+    mutate( 
+      Place = Place,
+      Deck = Deck,
+      Pilot = Pilot,
+      deck_id = deck_id,
+      preview_text = preview_text
+    ) %>%
+    select( Place, Deck, Pilot, deck_id, preview_text, everything() )
   
-  tournament_ids <- search_page_raw %>%
-    html_node("body") %>%
-    html_node("main") %>%
-    html_element(".layout-container-fluid") %>%
-    html_node("table") %>%
-    html_elements('tr') %>%
-    html_elements('a') %>%
-    html_attr('href') %>%
-    str_remove("/tournament/")
+  return( vectored_list )
   
-  return( tournament_ids )
-}
+}) 
 
-getTourneyIDs()
-
-
-
-
-getDeckIDs <- function( tourney_id, place = NULL, verbose = FALSE ){
-  
-  tourney_url <- paste0( "https://www.mtggoldfish.com/tournament/", tourney_id)
-  
-  deck_ids <- read_html(tourney_url) %>%
-    html_node("body") %>%
-    html_node("main") %>%
-    html_element('.layout-container-fluid') %>%
-    html_element('.deck-display') %>%
-    html_element('.deck-display-left-contents') %>%
-    html_element("table") %>%
-    html_elements('.tournament-decklist') %>%
-    html_attr('data-deckid') 
-  
-  if(!is.null(place)){
-    deck_ids <- deck_ids %>% head(place)
-  }
-  
-  if (verbose){
-    
-    verbose_df <- read_html(tourney_url) %>%
-      html_node("body") %>%
-      html_node("main") %>%
-      html_element('.layout-container-fluid') %>%
-      html_element('.deck-display') %>%
-      html_element('.deck-display-left-contents') %>%
-      html_element("table") %>%
-      html_table() %>%
-      filter( `Toggle Deck` == "Expand") %>%
-      select( Place, Deck, Pilot ) %>%
-      { if (!is.null(place)) head(.,place) else .} %>%
-      mutate( deck_id = deck_ids )
-    
-    deck_ids <- verbose_df
-    
-  }
-  
-  return( deck_ids )
-}
-
-
-getDeckIDs( getTourneyIDs()[5], place = 8, verbose=TRUE )
+vector_mapped_lists <- vector_mapped_lists %>%
+  bind_rows() %>%
+  replace( is.na(.), 0)
 
 
 
+PCA_values <- vector_mapped_lists %>%
+  column_to_rownames('deck_id') %>%
+  select( -Place, -Deck, -Pilot) %>%
+  #t() %>%
+  prcomp(scale = TRUE)
 
 
+first_two <- PCA_values$x %>%
+  as.data.table(keep.rownames = TRUE) %>%
+  select( deck_id= rn, PC1, PC2 ) 
 
-deck_download_url <- paste0(
-  "https://www.mtggoldfish.com/deck/download/", 
-  deck_ids[1]
+other_two <- PCA_values$x %>%
+  as.data.table(keep.rownames = TRUE) %>%
+  mutate(
+    axis_1 = mean(PC1, PC3, PC5, PC7, PC9),
+    axis_2 = mean(PC2, PC4, PC6, PC8, PC10)
+  ) %>%
+  select( deck_id = rn, PC1 = axis_1, PC2 = axis_2)
+
+other_two <- PCA_values$x %>%
+  as.data.table(keep.rownames = TRUE) %>%
+  select( deck_id = rn, PC1 = PC3, PC2 = PC4)
+
+completed <- left_join( 
+  vector_mapped_lists %>% select( Place, Deck, Pilot, deck_id),
+  first_two,
+  by = "deck_id"
 )
 
 
-source('inventory_functions.R')
+p <- ggplot( data = completed ) +
+  geom_point(
+    mapping = aes(
+      x = PC1, y = PC2,
+      color = Deck, group = Deck
+    )
+  )
 
 
-parseDecklist(deck_download_url)
-
-parseDecklist(deck_id = 1593)
+ggplotly(p)
 
 
-tourney_ids <- getTourneyIDs(months_prior = 1)
-place <- 1
+pr_var <- PCA_values$sdev^2
+var_load <- pr_var/sum(pr_var)
 
-total_decklists <- map(tourney_ids, function(tourney_id){
-  Sys.sleep(place/60)
-  getDeckIDs(tourney_id, place=place, verbose = TRUE)
-}) %>% bind_rows()
+plot( cumsum( var_load[1:100] ),type="b")
 
 
+
+
+
+
+library(umap)
+
+umap_values <- vector_mapped_lists %>%
+  select(-Place, -Deck, -Pilot, -preview_text) %>%
+  column_to_rownames('deck_id') %>%
+  umap()
+
+
+
+vector_mapped_lists
+
+
+complete <- umap_values$layout %>%
+  as.data.table(keep.rownames = TRUE) %>%
+  rename( deck_id = rn ) %>%
+  left_join(
+    vector_mapped_lists %>%
+      select( deck_id, Place, Deck, Pilot, preview_text), 
+    by = "deck_id"
+    )
+
+
+p <- ggplot( data = complete,mapping = aes(
+  x = V1, 
+  y = V2,
+  color = Deck, 
+  group = Deck,
+  text = preview_text
+) ) +
+  geom_point(
+    
+  )
+ggplotly(p, tooltip="text")
+
+
+
+deck_id <- 4159531
+parseDecklist(deck_id = '4159531')
+
+paste0("Title:\n",
+decklist %>%
+  filter( board == 'main' ) %>%
+  mutate(line = paste( qty, cardname) ) %>%
+  arrange( desc( qty) ) %>%
+  pull( line ) %>%
+  head( 5 ) %>%
+  paste( ., collapse = "\n"),
+"\n..."
+)
 
 
