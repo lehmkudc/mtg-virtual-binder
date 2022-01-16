@@ -13,12 +13,10 @@ suppressPackageStartupMessages({
 
 
 getTourneyIDs <- function( 
-  format = "Modern", months_prior = 3
+  format = "Modern", months_prior = 3, verbose = FALSE
 ){
-  # TODO: allow for different formats
   # TODO: allow for different tournament types
   # TODO: add better date range inputs
-  # TODO: add verbose mode for tournament metadata
   
   end_date <- Sys.Date()
   start_date <- Sys.Date() - months( months_prior )
@@ -34,6 +32,7 @@ getTourneyIDs <- function(
   )
   
   total_ids <- c()
+  total_table <- data.table()
   
   paged <- TRUE
   while( paged ){
@@ -50,7 +49,16 @@ getTourneyIDs <- function(
       html_attr('href') %>%
       str_remove("/tournament/")
     
+    verbose_table <- search_page_raw %>%
+      html_node("body") %>%
+      html_node("main") %>%
+      html_element(".layout-container-fluid") %>%
+      html_node("table") %>%
+      html_table %>%
+      mutate( tourney_id = tournament_ids )
+    
     total_ids <- c( total_ids, tournament_ids )
+    total_table <- bind_rows( total_table, verbose_table )
     
     # is there pagination at all?
     pagination <- search_page_raw %>%
@@ -102,7 +110,13 @@ getTourneyIDs <- function(
       }
     }
   }
-  return( total_ids )
+  
+  if( verbose ){
+    return( total_table )
+  } else {
+    return( total_ids )
+  }
+  
 }
 
 

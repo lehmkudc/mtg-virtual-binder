@@ -71,6 +71,7 @@ vector_mapped_lists <- vector_mapped_lists %>%
   bind_rows() %>%
   replace( is.na(.), 0)
 
+fwrite(vector_mapped_lists, "pauper_deck_dump.csv")
 
 
 PCA_values <- vector_mapped_lists %>%
