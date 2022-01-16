@@ -1,93 +1,144 @@
-suppressPackageStartupMessages({
-  library(pool)
-  library(tidyverse)
-  library(RMariaDB)
-  library(data.table)
-  library(jsonlite)
-  library(glue)
-})
+source('database_functions.R')
+source('scraping_functions.R')
+source('inventory_functions.R')
 
-
-con <- dbPool(
-  drv = MariaDB(),
-  host = "localhost",
-  port = 3306,
-  username = "mtg_inventory",
-  password = "Generic!2",
-  dbname = "decklist_storage"
-)
-
-# Pulled from MTGJSON
-allCards <- fread('../mtg_data/cards.csv')
-
-# Determining what columns to actually keep for this project
-glimpse(allCards)
-
-allCards %>% 
-  filter( name == "Lightning Bolt")
+pool <- connectToPrototypeDatabase()
 
 
 
-filteredCards <- allCards %>%
-filteredCards <- allCards %>%
-  #filter( name == "Ancestor's Chosen") %>%
-  select(
-    availability, colors, name, scryfallOracleId, types, manaValue
+
+
+
+# When processing a decklist, all of it's decks and decklists have to be
+#  added to the database all at once
+
+# An ideal query function should check the database first, then if it's not
+#  there, scrape it. 
+
+# Getting tourney IDs before caching is sort of inevitable, although storing 
+#  the metadata is helpful in general. This is the bit we use to determine
+#  if the item is cached.
+
+
+# I'll leave the original functions as is, but build the scraper functions to 
+#  dial down all the way down. 
+
+# Each level can have their own database check.
+
+parseDecklist <- function( filepath = NULL, deck_id = NULL ){
+  
+  if( !is.null(deck_id) ){
+    filepath <- paste0("https://www.mtggoldfish.com/deck/download/", deck_id )
+  }
+  
+  if( is.null(filepath)){
+    stop("No Deck Specified")
+  }
+  
+  lines <- readLines(filepath)
+  break_pt <- which( lines == "")
+  
+  if( length(break_pt) == 0 ){
+    print( lines )
+    return( data.frame() )
+  }
+  
+  reg <- "^(\\w+)\\s?(.*)$"
+  main <- data.frame(raw = lines[1:(break_pt-1)]) %>%
+    mutate(
+      qty = sub( reg, "\\1", raw ),
+      cardname = sub( reg, "\\2", raw ),
+      board = "main"
+    )
+  
+  side <- data.frame(raw = lines[(break_pt+1):length(lines)]) %>%
+    mutate(
+      qty = sub( reg, "\\1", raw ),
+      cardname = sub( reg, "\\2", raw ),
+      board = "side"
+    )
+  
+  deck <- rbind( main, side ) %>%
+    select( -raw ) %>%
+    mutate(qty = as.integer(qty))
+  
+  return( deck )
+}
+
+
+
+# Get a Decklist
+tourneys <- getTourneyIDs( months_prior = 1, verbose = TRUE )
+
+deck <- getDeckIDs( tourneys$tourney_id[1], place = 1, verbose = TRUE)
+
+decklist <- parseDecklist(deck_id = deck$deck_id)
+
+deckItem <- decklist[1,]
+deckID <- deck$deck_id
+
+storeDeckItem <- function(
+  pool, deckItem, deckID
+){
+  
+  # Get the cardID from database
+  cardname <- checkName( deckItem$cardname )
+  
+  cardID <- glue(
+    "SELECT cardID FROM cards WHERE name = '{cardname}'"
   ) %>%
-  filter( grepl(pattern = "paper", x = availability)) %>%
-  select( -availability ) %>%
-  distinct() %>%
-  rownames_to_column("cardID")
-
-
-dbWriteTable(con, "cards", filteredCards)
-
-
-
-allCards %>%
-  filter( name == "Ancestor's Chosen") %>%
-  glimpse()
-# starting to realize that these card ids are gonna change.
-
-
-
-allCards <- fromJSON("../mtg_data/AtomicCards.json")
-
-allCardsAtomic <- allCards$data %>%
-  bind_rows() %>%
-  as.data.table() 
-
-
-allCardsAtomic %>%
-  filter( !is.na(side)) %>%
-  glimpse()
-
-allCardsAtomic %>%
-  filter( name == "Lightning Bolt") %>%
-  glimpse()
-
-
-
-allCardsAtomic %>% 
-  select(
-    name, colors, scryfall_oid = identifiers.scryfallOracleId, manaCost, 
-    manaValue, printings, types
+    dbGetQuery(pool, .) %>% unlist() %>% unname()
+  
+  dbItem <- deckItem %>%
+    mutate(
+      main = ifelse( board == 'main', 1, 0),
+      deckID = deckID,
+      cardID = cardID
     ) %>%
-  filter( !is.na( scryfall_oid)) %>%
-  arrange(scryfall_oid)
+    select( cardID, deckID, qty, main )
+  
+  # Check if item already exists
+  
+  glue("
+    INSERT INTO decklist (cardID, deckID, main, qty) (
+      SELECT {cardID}, {deckID}, {dbItem$main[1]}, {dbItem$qty[1]}
+      WHERE NOT EXISTS (
+        SELECT 1 FROM decklist
+        WHERE cardID = {cardID}
+        AND deckID = {deckID}
+        AND main = {dbItem$main[1]}
+        AND qty = {dbItem$qty[1]}
+      )
+    );
+  ")
+  
+}
+
+decklist <- parseDecklist(deck_id = deck$deck_id)
+deck
+
+decklist$cardname[1]
+
+# This seems pretty inconsistent. Name is nowhere good enough especially for
+#   doublefaced cards.
+glue(
+  "SELECT * FROM cards
+  WHERE name = '{deckitem$cardname}'"
+) %>%
+  dbGetQuery(pool, .) %>%
+  cbind(
+    deckitem
+  ) %>%
+  mutate(
+    main = ifelse( board == 'main', 1, 0),
+    deckID = deck$deck_id
+  ) %>%
+  select(
+    cardID, deckID, qty, main
+  )
 
 
 
 
-allCards$data %>%
-  as.data.table()
 
 
-cardName <- "Lightning Bot"
-glue("https://api.scryfall.com/cards/named?fuzzy={cardName}") %>%
-  URLencode() %>%
-  fromJSON() %>%
-  as.data.frame()
-
-
-# Looks like I'm relying on auto-increment, but I need a way to handle DFC
