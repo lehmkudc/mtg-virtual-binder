@@ -183,3 +183,45 @@ scrapeTourneyIDs <- function(raw_html){
   
   return( output )
 }
+
+
+
+parseDecklist <- function( filepath = NULL, deck_id = NULL ){
+  
+  if( !is.null(deck_id) ){
+    filepath <- paste0("https://www.mtggoldfish.com/deck/download/", deck_id )
+  }
+  
+  if( is.null(filepath)){
+    stop("No Deck Specified")
+  }
+  
+  lines <- readLines(filepath)
+  break_pt <- which( lines == "")
+  
+  if( length(break_pt) == 0 ){
+    print( lines )
+    return( data.frame() )
+  }
+  
+  reg <- "^(\\w+)\\s?(.*)$"
+  main <- data.frame(raw = lines[1:(break_pt-1)]) %>%
+    mutate(
+      qty = sub( reg, "\\1", raw ),
+      cardname = sub( reg, "\\2", raw ),
+      board = "main"
+    )
+  
+  side <- data.frame(raw = lines[(break_pt+1):length(lines)]) %>%
+    mutate(
+      qty = sub( reg, "\\1", raw ),
+      cardname = sub( reg, "\\2", raw ),
+      board = "side"
+    )
+  
+  deck <- rbind( main, side ) %>%
+    select( -raw ) %>%
+    mutate(qty = as.integer(qty))
+  
+  return( deck )
+}

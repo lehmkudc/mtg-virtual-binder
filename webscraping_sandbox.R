@@ -1,4 +1,4 @@
-source('scraping_functions.R')
+source('mtggoldfish_functions.R')
 source('inventory_functions.R')
 
 suppressPackageStartupMessages({

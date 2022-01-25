@@ -14,7 +14,7 @@ A revamped approach to keeping track of my Magic the Gathering collection
 - [ ] Calculate "My Price" for a decklist using my collection
 - [ ] database schema and transactions for managing my collection
 - [ ] shiny app for my trade binder
-- [ ] UMAP or PCA for decklist comparisons
+- [x] UMAP or PCA for decklist comparisons
 - [x] Mtggoldfish webscraper for tournaments and decklists
 - [ ] Caching strategy for storing tournaments and decklists
 - [ ] Visualization for within-deck variation in card choices

@@ -1,5 +1,5 @@
 source('database_functions.R')
-source('scraping_functions.R')
+source('mtggoldfish_functions.R')
 source('inventory_functions.R')
 
 pool <- connectToPrototypeDatabase()
@@ -25,52 +25,19 @@ pool <- connectToPrototypeDatabase()
 
 # Each level can have their own database check.
 
-parseDecklist <- function( filepath = NULL, deck_id = NULL ){
-  
-  if( !is.null(deck_id) ){
-    filepath <- paste0("https://www.mtggoldfish.com/deck/download/", deck_id )
-  }
-  
-  if( is.null(filepath)){
-    stop("No Deck Specified")
-  }
-  
-  lines <- readLines(filepath)
-  break_pt <- which( lines == "")
-  
-  if( length(break_pt) == 0 ){
-    print( lines )
-    return( data.frame() )
-  }
-  
-  reg <- "^(\\w+)\\s?(.*)$"
-  main <- data.frame(raw = lines[1:(break_pt-1)]) %>%
-    mutate(
-      qty = sub( reg, "\\1", raw ),
-      cardname = sub( reg, "\\2", raw ),
-      board = "main"
-    )
-  
-  side <- data.frame(raw = lines[(break_pt+1):length(lines)]) %>%
-    mutate(
-      qty = sub( reg, "\\1", raw ),
-      cardname = sub( reg, "\\2", raw ),
-      board = "side"
-    )
-  
-  deck <- rbind( main, side ) %>%
-    select( -raw ) %>%
-    mutate(qty = as.integer(qty))
-  
-  return( deck )
-}
+# Should I even be passing tuples back and forth? If I was working in almost
+#  any other language these would be classes.
 
+# TODO fix ID and other column names to be distinct identities but coordinated
+#  across platforms
 
 
 # Get a Decklist
 tourneys <- getTourneyIDs( months_prior = 1, verbose = TRUE )
 
-deck <- getDeckIDs( tourneys$tourney_id[1], place = 1, verbose = TRUE)
+tourney <- tourneys[1,]
+
+deck <- getDeckIDs( tourney$tourney_id[1], place = 1, verbose = TRUE)
 
 decklist <- parseDecklist(deck_id = deck$deck_id)
 
@@ -112,7 +79,48 @@ storeDeckItem <- function(
     );
   ")
   
+  return()
+  
 }
+
+deck$Place %>% str_replace('\\D+',"")
+
+processDecklist <- function( pool, deck, tourney ){
+  
+  decklist <- parseDecklist( deck_id = deck$deck_id )
+  
+  # Add deck metadata to database
+  #print( tourney )
+  #print( deck )
+  place <- deck$Place %>% str_replace('\\D+',"")
+  
+  glue("
+  INSERT INTO decks (deckID, deckName, pilot, formatID, place) (
+  SELECT 
+    {deck$deck_id}, 
+    {deck$Deck}, 
+    {deck$Pilot}, 
+    (SELECT formatID FROM formats WHERE formatName = {tourney$Format} ), 
+    {place},
+    {tourney$tourney_id}
+  WHERE NOT EXISTS (
+    SELECT 1 FROM decks
+    WHERE deckID = {deck$deck_id}
+  ));"
+  )
+  
+  # Add each deckitem to database
+  
+  storeDeckItem()
+  
+  
+}
+
+
+processDecklist( pool, deck, tourney )
+
+
+
 
 decklist <- parseDecklist(deck_id = deck$deck_id)
 deck
